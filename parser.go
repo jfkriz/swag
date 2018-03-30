@@ -396,7 +396,7 @@ func (parser *Parser) parseTypeSpec(pkgName string, typeSpec *ast.TypeSpec, prop
 
 func (parser *Parser) parseStruct(pkgName string, field *ast.Field) (properties map[string]spec.Schema) {
 	properties = map[string]spec.Schema{}
-	name, schemaType, arrayType, exampleValue := parser.parseField(field)
+	name, schemaType, arrayType, description, exampleValue := parser.parseField(field)
 	// TODO: find package of schemaType and/or arrayType
 	if _, ok := parser.TypeDefinitions[pkgName][schemaType]; ok { // user type field
 		// write definition if not yet present
@@ -406,6 +406,7 @@ func (parser *Parser) parseStruct(pkgName string, field *ast.Field) (properties 
 				Ref: spec.Ref{
 					Ref: jsonreference.MustCreateRef("#/definitions/" + pkgName + "." + schemaType),
 				},
+				Description: description,
 			},
 		}
 	} else if schemaType == "array" { // array field type
@@ -414,20 +415,22 @@ func (parser *Parser) parseStruct(pkgName string, field *ast.Field) (properties 
 			parser.ParseDefinition(pkgName, parser.TypeDefinitions[pkgName][arrayType], arrayType)
 			properties[name] = spec.Schema{
 				SchemaProps: spec.SchemaProps{
-					Type:  []string{schemaType},
-					Items: &spec.SchemaOrArray{Schema: &spec.Schema{SchemaProps: spec.SchemaProps{Ref: spec.Ref{Ref: jsonreference.MustCreateRef("#/definitions/" + pkgName + "." + arrayType)}}}},
+					Type:        []string{schemaType},
+					Items:       &spec.SchemaOrArray{Schema: &spec.Schema{SchemaProps: spec.SchemaProps{Ref: spec.Ref{Ref: jsonreference.MustCreateRef("#/definitions/" + pkgName + "." + arrayType)}}}},
+					Description: description,
 				},
 			}
 		} else { // standard type in array
 			properties[name] = spec.Schema{
 				SchemaProps: spec.SchemaProps{Type: []string{schemaType},
-					Items: &spec.SchemaOrArray{Schema: &spec.Schema{SchemaProps: spec.SchemaProps{Type: []string{arrayType}}}}},
+					Items: &spec.SchemaOrArray{Schema: &spec.Schema{SchemaProps: spec.SchemaProps{Type: []string{arrayType}}}}, Description: description,
+				},
 				SwaggerSchemaProps: spec.SwaggerSchemaProps{Example: exampleValue},
 			}
 		}
 	} else {
 		properties[name] = spec.Schema{
-			SchemaProps:        spec.SchemaProps{Type: []string{schemaType}},
+			SchemaProps:        spec.SchemaProps{Type: []string{schemaType}, Description: description},
 			SwaggerSchemaProps: spec.SwaggerSchemaProps{Example: exampleValue},
 		}
 		nestStruct, ok := field.Type.(*ast.StructType)
@@ -440,7 +443,7 @@ func (parser *Parser) parseStruct(pkgName string, field *ast.Field) (properties 
 				}
 			}
 			properties[name] = spec.Schema{
-				SchemaProps:        spec.SchemaProps{Type: []string{schemaType}, Properties: props},
+				SchemaProps:        spec.SchemaProps{Type: []string{schemaType}, Properties: props, Description: description},
 				SwaggerSchemaProps: spec.SwaggerSchemaProps{Example: exampleValue},
 			}
 		}
@@ -463,7 +466,7 @@ func (parser *Parser) parseAnonymousField(pkgName string, field *ast.Field, prop
 	}
 }
 
-func (parser *Parser) parseField(field *ast.Field) (propName, schemaType, arrayType string, exampleValue interface{}) {
+func (parser *Parser) parseField(field *ast.Field) (propName, schemaType, arrayType string, description string, exampleValue interface{}) {
 	schemaType, arrayType = getPropertyName(field)
 	if len(arrayType) == 0 {
 		CheckSchemaType(schemaType)
@@ -475,12 +478,24 @@ func (parser *Parser) parseField(field *ast.Field) (propName, schemaType, arrayT
 		// `json:"tag"` -> json:"tag"
 		structTag := strings.Replace(field.Tag.Value, "`", "", -1)
 		jsonTag := reflect.StructTag(structTag).Get("json")
+		// Handle tags like `json:"tag,omitempty"` and `json:",omitempty"`
+		if strings.Contains(jsonTag, ",") {
+			if strings.HasPrefix(jsonTag, ",") {
+				jsonTag = ""
+			} else {
+				jsonTag = strings.SplitN(jsonTag, ",", 2)[0]
+			}
+		}
 		if jsonTag != "" {
 			propName = jsonTag
 		}
 		exampleTag := reflect.StructTag(structTag).Get("example")
 		if exampleTag != "" {
 			exampleValue = defineTypeOfExample(schemaType, exampleTag)
+		}
+		descriptionTag := reflect.StructTag(structTag).Get("description")
+		if descriptionTag != "" {
+			description = descriptionTag
 		}
 	}
 	return
